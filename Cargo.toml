@@ -1,0 +1,17 @@
+[package]
+name = "create3"
+version = "0.1.0"
+authors = ["Aman Raj <archanaamanraj@gmail.com>"]
+edition = "2021"
+license = "MIT/Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/amanraj1608/create3"
+description = """
+A library for calculating the address of contracts deployed via CREATE3.
+"""
+keywords = ["create3", "evm", "ethereum"]
+
+[dependencies]
+hex = "0.4.3"
+rand = "0.8.5"
+sha3 = "0.10.6"
