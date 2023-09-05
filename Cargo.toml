@@ -15,3 +15,10 @@ keywords = ["create3", "evm", "ethereum"]
 hex = "0.4.3"
 rand = "0.8.5"
 sha3 = "0.10.6"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "async_benchmark"
+harness = false
