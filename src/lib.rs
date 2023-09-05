@@ -1,6 +1,13 @@
 use rand::{distributions::Alphanumeric, Rng};
 use sha3::{Digest, Keccak256};
 
+// TODO: create fn that accepts salt as &[u8; 32] instead of just &[u8]
+// TODO: rename functions in major release to make sense with previously mentioned fn
+// TODO: should panic/return a Result object if prefix/suffix has incorrect characters
+// TODO: add regex fn for salt generation
+// TODO: convert panics into Results
+// TODO: rename the salt_suffix argument to salt_prefix
+
 // Proxy bytecode - Deplyed contract bytecode doesn't effect the deterministic address.
 const KECCAK256_PROXY_CHILD_BYTECODE: [u8; 32] = [
     33, 195, 93, 190, 27, 52, 74, 36, 136, 207, 51, 33, 214, 206, 84, 47, 142, 159, 48, 85, 68,
@@ -8,10 +15,11 @@ const KECCAK256_PROXY_CHILD_BYTECODE: [u8; 32] = [
 ];
 
 /// Calculates the address of a contract based on the given deployer and salt.
+/// 
 /// # Arguments
 ///
 /// * `deployer` - A byte slice representing the create3 deployer address.
-/// * `prefix` - A string representing the prefix that the resulting address should start with (without 0x).
+/// * `salt` - A string in u8 array format that is digested by keccak256 and used as the salt input.
 ///
 /// # Returns
 ///
@@ -44,8 +52,6 @@ pub fn calc_addr(deployer: &[u8], salt: &[u8]) -> [u8; 20] {
     address
 }
 
-// todo: write some tests later
-// todo: fx naming for prefix and suffix
 /// Generates a random salt for a given deployer and prefix.
 /// # Arguments
 ///
@@ -129,4 +135,99 @@ pub fn generate_salt_suffix(deployer: &[u8], salt_suffix: &str, prefix: &str) ->
         }
     }
     salt_bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use sha3::{Digest, Keccak256};
+    use crate::{calc_addr, generate_salt, generate_salt_suffix, KECCAK256_PROXY_CHILD_BYTECODE};
+
+    #[test]
+    fn should_calculate_correctly_with_given_salt() {
+        let deployer: &Vec<u8> = &hex::decode("0fC5025C764cE34df352757e82f7B5c4Df39A836").unwrap();
+
+        // Answers were generated with the Solady CREATE3 library
+        // https://github.com/Vectorized/solady/blob/main/src/utils/CREATE3.sol
+        let correct_answers: Vec<(&str, &str)> = vec![
+            ("a", "BFf47440D3A5E59714F1D995F8b105E2a04AB46A"),
+            ("b", "7E10Ca8fa1c8e1528601Fea82F51646182f835b8"),
+            ("c", "70b556548FF0161082fB751d5E372eFa0133805C"),
+            // https://www.poetryfoundation.org/poems/44263/fire-and-ice
+            ("Some say the world will end in fire, Some say in ice. From what I’ve tasted of desire I hold with those who favor fire. But if it had to perish twice, I think I know enough of hate To say that for destruction ice Is also great And would suffice.", "C244c5dEa48e677cE7cAbD05BF8eC220b1a99Fc9")
+        ];
+
+        for (salt, answer) in correct_answers.iter() {
+            let addr: [u8; 20] = calc_addr(deployer, salt.as_bytes());
+            let addr_str = hex::encode(addr);
+            assert_eq!(addr_str, answer.to_lowercase());
+        }
+    }
+
+    #[test]
+    fn should_generate_with_prefix() {
+        let deployer: &Vec<u8> = &hex::decode("5e17b14ADd6c386305A32928F985b29bbA34Eff5").unwrap();
+        let runs = vec!["0", "00", "000", "abc", "123", "789"];
+
+        for run in runs.iter() {
+            let salt = generate_salt(deployer, run);
+            
+            // NOTE:    would rather the library expose a function. Waiting until major release to do so
+            //          let addr: [u8; 20] = calc_addr_with_bytes(deployer, &salt);
+            let mut bytes: Vec<u8> = Vec::new();
+            bytes.push(0xff);
+            bytes.extend_from_slice(deployer);
+            bytes.extend_from_slice(&salt);
+            bytes.extend_from_slice(&KECCAK256_PROXY_CHILD_BYTECODE);
+            let hash = Keccak256::digest(&bytes);
+            let mut proxy_bytes = [0u8; 20];
+            proxy_bytes.copy_from_slice(&hash[12..]);
+        
+            // Use proxy address to compute the final contract address.
+            // keccak256(rlp(proxy_bytes ++ 0x01)) More here -> https://ethereum.stackexchange.com/a/761/66849
+            let mut bytes2: Vec<u8> = Vec::new();
+            bytes2.extend_from_slice(&[0xd6, 0x94]); // RLP prefix for a list of two items
+            bytes2.extend(&proxy_bytes); // The proxy address
+            bytes2.push(0x01); // The nonce of the contract
+            let hash2 = Keccak256::digest(&bytes2);
+        
+            // resulting hash -> The last 20 bytes (40 characters) of the hash.
+            let mut address = [0u8; 20];
+            address.copy_from_slice(&hash2[12..]);
+
+            assert!(hex::encode(address).starts_with(run));
+        }
+    }
+
+    #[test]
+    fn should_generate_with_empty_prefix() {
+        let deployer: &Vec<u8> = &hex::decode("0fC5025C764cE34df352757e82f7B5c4Df39A836").unwrap();
+        generate_salt(deployer, "");
+    }
+
+    #[test]
+    fn should_generate_with_salt_prefix() {
+        let deployer: &Vec<u8> = &hex::decode("5e17b14ADd6c386305A32928F985b29bbA34Eff5").unwrap();
+        let runs = vec!["0", "00", "000", "abc", "123", "789"];
+        let salt_prefix = "testpfx_";
+        for run in runs.iter() {
+            generate_salt_suffix(deployer, salt_prefix, run);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn generate_salt_should_panic_if_prefix_is_greater_than_20_bytes() {
+        let deployer = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045".as_bytes();
+        let prefix = "0x00000000000000000000000000000000000000000";
+        generate_salt(deployer, prefix);
+    }
+
+    #[test]
+    #[should_panic]
+    fn generate_salt_suffix_should_panic_if_prefix_is_greater_than_20_bytes() {
+        let deployer = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045".as_bytes();
+        let suffix = "";
+        let prefix = "0x00000000000000000000000000000000000000000";
+        generate_salt_suffix(deployer, suffix, prefix);
+    }
 }
