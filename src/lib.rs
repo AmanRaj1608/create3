@@ -121,21 +121,23 @@ pub fn generate_salt(deployer: &[u8], prefix: &str) -> [u8; 32] {
 ///
 /// # Returns
 ///
-/// A 32-byte array representing the generated salt.
-pub fn generate_salt_suffix(deployer: &[u8], salt_suffix: &str, prefix: &str) -> [u8; 32] {
+/// A tuple where the first element is the string formatted generated salt, and the second element is a 
+/// 32-byte array representing the digested generated salt.
+pub fn generate_salt_suffix(deployer: &[u8], salt_suffix: &str, prefix: &str) -> (String, [u8; 32]) {
     let mut salt_bytes = [0; 32];
+    let mut salt: String;
     let prefix_len = prefix.len();
     if prefix_len > 20 {
         panic!("prefix must be less than or equal to 20 bytes in hexadecimal format");
     }
 
     loop {
-        let salt: String = rand::thread_rng()
+        salt = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(7)
             .map(char::from)
             .collect();
-        let salt = salt_suffix.to_owned() + &salt;
+        salt = salt_suffix.to_owned() + &salt;
         let vanity_addr = calc_addr(deployer, &salt.as_bytes());
         let vanity_addr = hex::encode(&vanity_addr);
         if vanity_addr.starts_with(&prefix) {
@@ -148,13 +150,13 @@ pub fn generate_salt_suffix(deployer: &[u8], salt_suffix: &str, prefix: &str) ->
             break;
         }
     }
-    salt_bytes
+    (salt, salt_bytes)
 }
 
 #[cfg(test)]
 mod tests {
-    use sha3::{Digest, Keccak256};
-    use crate::{calc_addr, generate_salt, generate_salt_suffix, KECCAK256_PROXY_CHILD_BYTECODE, calc_addr_with_bytes};
+    use sha3::{Keccak256, Digest};
+    use crate::{calc_addr, generate_salt, generate_salt_suffix, calc_addr_with_bytes};
 
     #[test]
     fn should_calculate_correctly_with_given_salt_string() {
@@ -228,7 +230,10 @@ mod tests {
         let runs = vec!["0", "00", "000", "abc", "123", "789"];
         let salt_prefix = "testpfx_";
         for run in runs.iter() {
-            generate_salt_suffix(deployer, salt_prefix, run);
+            let (salt, digested_salt) = generate_salt_suffix(deployer, salt_prefix, run);
+            assert!(salt.starts_with(salt_prefix));
+            assert_eq!(Keccak256::digest(salt).as_slice()[0.. 32], digested_salt);
+            assert!(hex::encode(calc_addr_with_bytes(deployer, &digested_salt)).starts_with(run));
         }
     }
 
