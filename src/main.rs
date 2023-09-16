@@ -83,7 +83,7 @@ fn main() {
                 println!(
                     "\x1b[32mSalt for prefix {}:\x1b[0m 0x{}",
                     prefix,
-                    hex::encode(&salt)
+                    hex::encode(&salt.1)
                 );
                 break;
             }
