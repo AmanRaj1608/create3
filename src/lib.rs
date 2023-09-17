@@ -4,10 +4,8 @@ use errors::Create3GenerateSaltError;
 use rand::{distributions::Alphanumeric, Rng};
 use sha3::{Digest, Keccak256};
 
-// TODO: rename functions in major release to make sense with previously mentioned fn
-// TODO: should panic/return a Result object if prefix/suffix has incorrect characters
 // TODO: add regex fn for salt generation
-// TODO: convert panics into Results
+// TODO: add additional input checks to binary
 
 // Proxy bytecode - Deplyed contract bytecode doesn't effect the deterministic address.
 const KECCAK256_PROXY_CHILD_BYTECODE: [u8; 32] = [
