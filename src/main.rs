@@ -1,4 +1,4 @@
-use create3::{calc_addr, generate_salt, generate_salt_suffix};
+use create3::{calc_addr, errors::Create3GenerateSaltError, generate_salt, generate_salt_prefix};
 use std::io::{self, Write};
 
 fn main() {
@@ -46,13 +46,30 @@ fn main() {
                 io::stdin().read_line(&mut deployer).unwrap();
                 let deployer = deployer.trim().trim_start_matches("0x");
 
-                print!("\x1b[36mEnter prefix (without '0x' prefix):\x1b[0m ");
-                io::stdout().flush().unwrap();
-                let mut prefix = String::new();
-                io::stdin().read_line(&mut prefix).unwrap();
-                let prefix = prefix.trim();
+                let salt;
+                let mut prefix;
 
-                let salt = generate_salt(&hex::decode(deployer).unwrap(), prefix);
+                print!("\x1b[36mEnter prefix (without '0x' prefix):\x1b[0m ");
+                loop {
+                    io::stdout().flush().unwrap();
+                    prefix = String::new();
+                    io::stdin().read_line(&mut prefix).unwrap();
+                    prefix = prefix.trim().to_owned();
+
+                    match generate_salt(&hex::decode(deployer).unwrap(), &prefix) {
+                        Ok(s) => {
+                            salt = s;
+                            break;
+                        }
+                        Err(Create3GenerateSaltError::PrefixNotHexEncoded) => {
+                            print!("\x1b[36mInput was not hex encoded. Please enter prefix (without '0x' prefix):\x1b[0m ")
+                        }
+                        Err(Create3GenerateSaltError::PrefixTooLong) => {
+                            print!("\x1b[36mPrefix was too long (over 20 characters). Please enter prefix (without '0x' prefix):\x1b[0m ")
+                        }
+                    }
+                }
+
                 println!(
                     "\x1b[32mSalt for prefix {}:\x1b[0m 0x{}",
                     prefix,
@@ -67,23 +84,41 @@ fn main() {
                 io::stdin().read_line(&mut deployer).unwrap();
                 let deployer = deployer.trim().trim_start_matches("0x");
 
-                print!("\x1b[36mEnter salt (utf8):\x1b[0m ");
+                print!("\x1b[36mEnter salt prefix (utf8):\x1b[0m ");
                 io::stdout().flush().unwrap();
-                let mut salt = String::new();
-                io::stdin().read_line(&mut salt).unwrap();
-                let salt = salt.trim();
+                let mut salt_prefix = String::new();
+                io::stdin().read_line(&mut salt_prefix).unwrap();
+                let salt_prefix = salt_prefix.trim();
 
-                print!("\x1b[36mEnter prefix (without '0x' prefix):\x1b[0m ");
-                io::stdout().flush().unwrap();
-                let mut prefix = String::new();
-                io::stdin().read_line(&mut prefix).unwrap();
-                let prefix = prefix.trim();
+                let mut prefix;
+                let generated;
 
-                let salt = generate_salt_suffix(&hex::decode(deployer).unwrap(), salt, prefix);
+                print!("\x1b[36mEnter address prefix (without '0x' prefix):\x1b[0m ");
+                loop {
+                    io::stdout().flush().unwrap();
+                    prefix = String::new();
+                    io::stdin().read_line(&mut prefix).unwrap();
+                    prefix = prefix.trim().to_owned();
+
+                    match generate_salt_prefix(&hex::decode(deployer).unwrap(), salt_prefix, &prefix) {
+                        Ok(s) => {
+                            generated = s;
+                            break;
+                        }
+                        Err(Create3GenerateSaltError::PrefixNotHexEncoded) => {
+                            print!("\x1b[36mInput was not hex encoded. Please enter prefix (without '0x' prefix):\x1b[0m ")
+                        }
+                        Err(Create3GenerateSaltError::PrefixTooLong) => {
+                            print!("\x1b[36mPrefix was too long (over 20 characters). Please enter prefix (without '0x' prefix):\x1b[0m ")
+                        }
+                    }
+                }
+
                 println!(
-                    "\x1b[32mSalt for prefix {}:\x1b[0m 0x{}",
+                    "\x1b[32mSalt for prefix {}:\x1b[0m 0x{} ({})",
                     prefix,
-                    hex::encode(&salt.1)
+                    hex::encode(&generated.1),
+                    generated.0
                 );
                 break;
             }
