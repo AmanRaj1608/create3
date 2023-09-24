@@ -1,5 +1,7 @@
 pub mod errors;
 
+use std::{thread, sync::mpsc};
+
 use errors::Create3GenerateSaltError;
 use rand::{distributions::Alphanumeric, Rng};
 use sha3::{Digest, Keccak256};
@@ -27,8 +29,6 @@ const KECCAK256_PROXY_CHILD_BYTECODE: [u8; 32] = [
 pub fn calc_addr(deployer: &[u8], salt: &[u8]) -> [u8; 20] {
     // [contract creation prefix] + [create3 deployer] + [salt] + [keccak256(childBytecode)]
     let salt_hash = Keccak256::digest(salt);
-    // println!("Salt hash: 0x{}", hex::encode(&salt_hash));
-
     calc_addr_with_bytes(deployer, &salt_hash.as_slice()[0..32].try_into().unwrap())
 }
 
@@ -46,6 +46,11 @@ pub fn calc_addr_with_bytes(deployer: &[u8], salt: &[u8; 32]) -> [u8; 20] {
     let mut bytes: Vec<u8> = Vec::new();
     bytes.push(0xff);
     bytes.extend_from_slice(deployer);
+    calc_addr_sans_deployer(bytes, salt)
+}
+
+/// Internal step for calculating bytes, which can be reused
+fn calc_addr_sans_deployer(mut bytes: Vec<u8>, salt: &[u8]) -> [u8; 20] {
     bytes.extend_from_slice(salt);
     bytes.extend_from_slice(&KECCAK256_PROXY_CHILD_BYTECODE);
     let hash = Keccak256::digest(&bytes);
@@ -55,9 +60,12 @@ pub fn calc_addr_with_bytes(deployer: &[u8], salt: &[u8; 32]) -> [u8; 20] {
     // Use proxy address to compute the final contract address.
     // keccak256(rlp(proxy_bytes ++ 0x01)) More here -> https://ethereum.stackexchange.com/a/761/66849
     let mut bytes2: Vec<u8> = Vec::new();
-    bytes2.extend_from_slice(&[0xd6, 0x94]); // RLP prefix for a list of two items
-    bytes2.extend(&proxy_bytes); // The proxy address
-    bytes2.push(0x01); // The nonce of the contract
+    bytes2.extend_from_slice(&[0xd6, 0x94]);
+    // RLP prefix for a list of two items
+    bytes2.extend(&proxy_bytes);
+    // The proxy address
+    bytes2.push(0x01);
+    // The nonce of the contract
     let hash2 = Keccak256::digest(&bytes2);
 
     // resulting hash -> The last 20 bytes (40 characters) of the hash.
@@ -120,6 +128,58 @@ pub fn generate_salt(deployer: &[u8], prefix: &str) -> Result<(String, [u8; 32])
     Ok((salt, salt_bytes))
 }
 
+
+// -> Result<((String, [u8; 32]), Create3GenerateSaltError>
+pub fn generate_salt_async(deployer: &[u8], prefix: &str) {
+    let mut threads = Vec::new();
+
+    // Starts the slice for address calculation
+    let mut bytes: Vec<u8> = Vec::new();
+    bytes.push(0xff);
+    bytes.extend_from_slice(deployer);
+
+    // Creates a channel
+    let (tx, rx) = mpsc::channel();
+
+    // Creates 6 threads to try to find what we need
+    for t in 0..6 {
+        let p = prefix.to_owned();
+        let addr_calc_slice = bytes.clone();
+        let sender = tx.clone();
+
+        let handle = thread::spawn(move || {
+            let mut salt_bytes = [0; 32];
+            let mut salt: String;
+            let prefix = sanitize_prefix(&p).unwrap_or("".to_owned());
+        
+            loop {
+                salt = rand::thread_rng()
+                    .sample_iter(&Alphanumeric)
+                    .take(10)
+                    .map(char::from)
+                    .collect();
+                let vanity_addr = calc_addr_sans_deployer(addr_calc_slice.clone(), salt.as_bytes());
+                let vanity_addr = hex::encode(&vanity_addr);
+                if vanity_addr.starts_with(&prefix) {
+                    let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
+                    let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
+                    salt_bytes.copy_from_slice(&salt_bytes_slice);
+
+                    // println!("Thread {t} found: {} {}", vanity_addr, salt);
+                    if let Ok(_) = sender.send(salt) {
+                        break;
+                    }
+                }
+            }
+        });
+        threads.push(handle);
+    }
+
+    let final_result = rx.recv().unwrap();
+    // println!("Final result was {}", final_result); 
+    drop(rx);
+}
+
 /// Generates a salt with a prefix for a given address prefix and salt.
 ///
 /// # Arguments
@@ -170,7 +230,7 @@ mod tests {
 
     use crate::{
         calc_addr, calc_addr_with_bytes, generate_salt, generate_salt_prefix,
-        Create3GenerateSaltError,
+        Create3GenerateSaltError, generate_salt_async,
     };
     use sha3::{Digest, Keccak256};
 
@@ -310,5 +370,13 @@ mod tests {
                 Err(Create3GenerateSaltError::PrefixNotHexEncoded)
             );
         }
+    }
+
+    #[test]
+    fn should_run_threads() {
+        let deployer: &Vec<u8> = &hex::decode("0fC5025C764cE34df352757e82f7B5c4Df39A836").unwrap();
+        let prefix = "0000";
+
+        generate_salt_async(deployer, prefix);
     }
 }
