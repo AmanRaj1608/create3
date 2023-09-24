@@ -95,13 +95,15 @@ fn sanitize_prefix(prefix: &str) -> Result<String, Create3GenerateSaltError> {
 ///
 /// # Returns
 ///
-/// A 32-byte array representing the generated salt.
-pub fn generate_salt(deployer: &[u8], prefix: &str) -> Result<[u8; 32], Create3GenerateSaltError> {
+/// A tuple where the first element is the string formatted generated salt, and the second element is a
+/// 32-byte array representing the digested generated salt.
+pub fn generate_salt(deployer: &[u8], prefix: &str) -> Result<(String, [u8; 32]), Create3GenerateSaltError> {
     let mut salt_bytes = [0; 32];
+    let mut salt: String;
     let prefix = sanitize_prefix(prefix)?;
 
     loop {
-        let salt: String = rand::thread_rng()
+        salt = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
@@ -112,13 +114,10 @@ pub fn generate_salt(deployer: &[u8], prefix: &str) -> Result<[u8; 32], Create3G
             let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
             let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
             salt_bytes.copy_from_slice(&salt_bytes_slice);
-
-            println!("\x1b[32mVanity address:\x1b[0m 0x{}", vanity_addr);
-            println!("\x1b[32mSalt string:\x1b[0m {}", salt);
             break;
         }
     }
-    Ok(salt_bytes)
+    Ok((salt, salt_bytes))
 }
 
 /// Generates a salt with a prefix for a given address prefix and salt.
@@ -159,9 +158,6 @@ pub fn generate_salt_prefix(
             let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
             let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
             salt_bytes.copy_from_slice(&salt_bytes_slice);
-
-            println!("\x1b[32mVanity address:\x1b[0m 0x{}", vanity_addr);
-            println!("\x1b[32mSalt string:\x1b[0m {}", salt);
             break;
         }
     }
@@ -244,7 +240,7 @@ mod tests {
              * This essentially repeats the code in generate_salt. Could be useful for future changes of the function.
              * Is there a better way of testing this?
              */
-            let addr: [u8; 20] = calc_addr_with_bytes(deployer, &salt);
+            let addr: [u8; 20] = calc_addr_with_bytes(deployer, &salt.1);
 
             assert!(hex::encode(addr).starts_with(&run.to_lowercase()));
         }

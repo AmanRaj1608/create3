@@ -1,4 +1,4 @@
-use create3::{calc_addr, errors::Create3GenerateSaltError, generate_salt, generate_salt_prefix};
+use create3::{calc_addr, errors::Create3GenerateSaltError, generate_salt, generate_salt_prefix, calc_addr_with_bytes};
 use std::io::{self, Write};
 
 fn main() {
@@ -45,6 +45,7 @@ fn main() {
                 let mut deployer = String::new();
                 io::stdin().read_line(&mut deployer).unwrap();
                 let deployer = deployer.trim().trim_start_matches("0x");
+                let deployer = &hex::decode(deployer).unwrap();
 
                 let salt;
                 let mut prefix;
@@ -56,7 +57,7 @@ fn main() {
                     io::stdin().read_line(&mut prefix).unwrap();
                     prefix = prefix.trim().to_owned();
 
-                    match generate_salt(&hex::decode(deployer).unwrap(), &prefix) {
+                    match generate_salt(deployer, &prefix) {
                         Ok(s) => {
                             salt = s;
                             break;
@@ -70,11 +71,9 @@ fn main() {
                     }
                 }
 
-                println!(
-                    "\x1b[32mSalt for prefix {}:\x1b[0m 0x{}",
-                    prefix,
-                    hex::encode(&salt)
-                );
+                println!("\x1b[32mVanity address:\x1b[0m 0x{}", hex::encode(calc_addr_with_bytes(deployer, &salt.1)));
+                println!("\x1b[32mSalt string:\x1b[0m {}", salt.0);
+                println!("\x1b[32mHashed salt for prefix {}:\x1b[0m 0x{}", prefix, hex::encode(salt.1));
                 break;
             }
             "3" => {
@@ -92,6 +91,8 @@ fn main() {
 
                 let mut prefix;
                 let generated;
+                let vanity_addr;
+                let deployer = &hex::decode(deployer).unwrap();
 
                 print!("\x1b[36mEnter address prefix (without '0x' prefix):\x1b[0m ");
                 loop {
@@ -100,9 +101,10 @@ fn main() {
                     io::stdin().read_line(&mut prefix).unwrap();
                     prefix = prefix.trim().to_owned();
 
-                    match generate_salt_prefix(&hex::decode(deployer).unwrap(), salt_prefix, &prefix) {
+                    match generate_salt_prefix(deployer, salt_prefix, &prefix) {
                         Ok(s) => {
                             generated = s;
+                            vanity_addr = calc_addr_with_bytes(deployer, &generated.1);
                             break;
                         }
                         Err(Create3GenerateSaltError::PrefixNotHexEncoded) => {
@@ -114,12 +116,9 @@ fn main() {
                     }
                 }
 
-                println!(
-                    "\x1b[32mSalt for prefix {}:\x1b[0m 0x{} ({})",
-                    prefix,
-                    hex::encode(&generated.1),
-                    generated.0
-                );
+                println!("\x1b[32mVanity address:\x1b[0m 0x{}", hex::encode(vanity_addr));
+                println!("\x1b[32mSalt string for prefix {}:\x1b[0m {}", salt_prefix, generated.0);
+                println!("\x1b[32mHashed salt :\x1b[0m 0x{}", hex::encode(&generated.1));
                 break;
             }
             _ => {
