@@ -1,6 +1,10 @@
 pub mod errors;
 
-use std::{thread, sync::mpsc};
+use std::{
+    ops::Deref,
+    sync::{Arc, RwLock},
+    thread,
+};
 
 use errors::Create3GenerateSaltError;
 use rand::{distributions::Alphanumeric, Rng};
@@ -46,13 +50,11 @@ pub fn calc_addr_with_bytes(deployer: &[u8], salt: &[u8; 32]) -> [u8; 20] {
     let mut bytes: Vec<u8> = Vec::new();
     bytes.push(0xff);
     bytes.extend_from_slice(deployer);
-    calc_addr_sans_deployer(bytes, salt)
-}
-
-/// Internal step for calculating bytes, which can be reused
-fn calc_addr_sans_deployer(mut bytes: Vec<u8>, salt: &[u8]) -> [u8; 20] {
     bytes.extend_from_slice(salt);
     bytes.extend_from_slice(&KECCAK256_PROXY_CHILD_BYTECODE);
+
+    // println!("FINAL BYTES: {:?}, SALT: {:?}", bytes, salt);
+
     let hash = Keccak256::digest(&bytes);
     let mut proxy_bytes = [0u8; 20];
     proxy_bytes.copy_from_slice(&hash[12..]);
@@ -105,7 +107,10 @@ fn sanitize_prefix(prefix: &str) -> Result<String, Create3GenerateSaltError> {
 ///
 /// A tuple where the first element is the string formatted generated salt, and the second element is a
 /// 32-byte array representing the digested generated salt.
-pub fn generate_salt(deployer: &[u8], prefix: &str) -> Result<(String, [u8; 32]), Create3GenerateSaltError> {
+pub fn generate_salt(
+    deployer: &[u8],
+    prefix: &str,
+) -> Result<(String, [u8; 32]), Create3GenerateSaltError> {
     let mut salt_bytes = [0; 32];
     let mut salt: String;
     let prefix = sanitize_prefix(prefix)?;
@@ -128,45 +133,83 @@ pub fn generate_salt(deployer: &[u8], prefix: &str) -> Result<(String, [u8; 32])
     Ok((salt, salt_bytes))
 }
 
+/// Generates a random salt for a given deployer and prefix by using multiple threads.
+/// # Arguments
+///
+/// * `deployer` - A byte slice representing the create3 deployer address.
+/// * `prefix` - A string representing the prefix that the resulting address should start with (without 0x).
+/// * `thread_count` - A u8 integer representing the number of threads to create when calculating the address.
+///
+/// # Panics
+///
+/// This method will panic if the `prefix` is greater than 20 bytes in hexadecimal format.
+///
+/// # Returns
+///
+/// A tuple where the first element is the string formatted generated salt, and the second element is a
+/// 32-byte array representing the digested generated salt.
+pub fn generate_salt_async(
+    deployer: &[u8],
+    prefix: &str,
+    thread_count: u8,
+) -> Result<(String, [u8; 32]), Create3GenerateSaltError> {
+    let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
+    let lock: Arc<RwLock<(String, [u8; 32])>> = Arc::new(RwLock::new(("".to_owned(), [0; 32])));
 
-// -> Result<((String, [u8; 32]), Create3GenerateSaltError>
-pub fn generate_salt_async(deployer: &[u8], prefix: &str) {
-    let mut threads = Vec::new();
+    // TODO: remove unwraps and replace with errors/error handling
 
-    // Starts the slice for address calculation
-    let mut bytes: Vec<u8> = Vec::new();
-    bytes.push(0xff);
-    bytes.extend_from_slice(deployer);
+    // Sanitize prefix
+    let prefix = sanitize_prefix(prefix)?;
 
-    // Creates a channel
-    let (tx, rx) = mpsc::channel();
-
-    // Creates 6 threads to try to find what we need
-    for t in 0..6 {
+    // Creates threads to try to find what we need
+    for _ in 0..thread_count {
         let p = prefix.to_owned();
-        let addr_calc_slice = bytes.clone();
-        let sender = tx.clone();
+        let d = deployer.clone().to_owned();
 
+        let lock = lock.clone();
         let handle = thread::spawn(move || {
             let mut salt_bytes = [0; 32];
             let mut salt: String;
-            let prefix = sanitize_prefix(&p).unwrap_or("".to_owned());
-        
+
             loop {
                 salt = rand::thread_rng()
                     .sample_iter(&Alphanumeric)
                     .take(10)
                     .map(char::from)
                     .collect();
-                let vanity_addr = calc_addr_sans_deployer(addr_calc_slice.clone(), salt.as_bytes());
+                let vanity_addr = calc_addr(&d, salt.as_bytes());
                 let vanity_addr = hex::encode(&vanity_addr);
-                if vanity_addr.starts_with(&prefix) {
-                    let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
-                    let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
-                    salt_bytes.copy_from_slice(&salt_bytes_slice);
 
-                    // println!("Thread {t} found: {} {}", vanity_addr, salt);
-                    if let Ok(_) = sender.send(salt) {
+                match lock.try_read() {
+                    Ok(read_lock) => {
+                        // If the length is greater than 0, it has already been written, so we can stop calculations
+                        if read_lock.0.len() > 0 {
+                            //println!("{t} read the read_lock, and is breaking!");
+                            break;
+                        }
+
+                        if vanity_addr.starts_with(&p) {
+                            // Drop read lock and attempt to acquire write lock
+                            drop(read_lock);
+                            //println!("{t} dropped the read_lock because it wants write access!");
+                            let mut write_lock = lock.write().unwrap();
+                            //println!("{t} found lock write access!");
+
+                            let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
+                            let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
+                            salt_bytes.copy_from_slice(&salt_bytes_slice);
+
+                            *write_lock = (salt, salt_bytes);
+                            drop(write_lock);
+                            break;
+                        } else {
+                            drop(read_lock);
+                            //println!("{t} dropped the read_lock!");
+                        }
+                    }
+                    Err(_) => {
+                        //println!("{t} try read failed, so another thread acquired a write lock! Now breaking.");
+                        // Break because this means some other thread acquired a write lock
                         break;
                     }
                 }
@@ -175,9 +218,13 @@ pub fn generate_salt_async(deployer: &[u8], prefix: &str) {
         threads.push(handle);
     }
 
-    let final_result = rx.recv().unwrap();
-    // println!("Final result was {}", final_result); 
-    drop(rx);
+    // Ensure all threads wrap up
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    let read_lock: std::sync::RwLockReadGuard<'_, (String, [u8; 32])> = lock.read().unwrap();
+    Ok((read_lock.0.clone(), read_lock.1.clone()))
 }
 
 /// Generates a salt with a prefix for a given address prefix and salt.
@@ -229,8 +276,8 @@ mod tests {
     use std::vec;
 
     use crate::{
-        calc_addr, calc_addr_with_bytes, generate_salt, generate_salt_prefix,
-        Create3GenerateSaltError, generate_salt_async,
+        calc_addr, calc_addr_with_bytes, generate_salt, generate_salt_async, generate_salt_prefix,
+        Create3GenerateSaltError,
     };
     use sha3::{Digest, Keccak256};
 
@@ -301,7 +348,23 @@ mod tests {
              * Is there a better way of testing this?
              */
             let addr: [u8; 20] = calc_addr_with_bytes(deployer, &salt.1);
+            let addr_string = calc_addr(deployer, salt.0.as_bytes());
 
+            assert_eq!(addr, addr_string);
+            assert!(hex::encode(addr).starts_with(&run.to_lowercase()));
+        }
+    }
+
+    #[test]
+    fn should_generate_async_with_prefix() {
+        let deployer: &Vec<u8> = &hex::decode("5e17b14ADd6c386305A32928F985b29bbA34Eff5").unwrap();
+        let runs = vec!["0", "00", "000", "abcd", "123", "789", "DeF"];
+
+        for run in runs.iter() {
+            let salt = generate_salt_async(deployer, run, 6).unwrap();
+            let addr: [u8; 20] = calc_addr_with_bytes(deployer, &salt.1);
+            
+            assert_eq!(calc_addr(deployer, salt.0.as_bytes()), addr);
             assert!(hex::encode(addr).starts_with(&run.to_lowercase()));
         }
     }
@@ -370,13 +433,5 @@ mod tests {
                 Err(Create3GenerateSaltError::PrefixNotHexEncoded)
             );
         }
-    }
-
-    #[test]
-    fn should_run_threads() {
-        let deployer: &Vec<u8> = &hex::decode("0fC5025C764cE34df352757e82f7B5c4Df39A836").unwrap();
-        let prefix = "0000";
-
-        generate_salt_async(deployer, prefix);
     }
 }

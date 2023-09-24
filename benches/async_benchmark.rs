@@ -18,7 +18,7 @@ fn generate_salt_async_benchmark(c: &mut Criterion) {
     let deployer = black_box(hex::decode("0fC5025C764cE34df352757e82f7B5c4Df39A836").unwrap());
 
     c.bench_function("multi-threaded generate salt", |b| {
-        b.iter(|| generate_salt_async(&deployer, prefix))
+        b.iter(|| generate_salt_async(&deployer, prefix, 6))
     });
 }
 
