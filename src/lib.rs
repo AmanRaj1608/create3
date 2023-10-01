@@ -225,6 +225,7 @@ pub fn generate_salt_prefix_multithread(
             let mut salt_bytes = [0; 32];
 
             loop {
+                // Generates a vanity address (potentially extensive calculation)
                 salt = rand::thread_rng()
                     .sample_iter(&Alphanumeric)
                     .take(7)
@@ -234,33 +235,28 @@ pub fn generate_salt_prefix_multithread(
                 let vanity_addr = calc_addr(&d, &salt.as_bytes());
                 let vanity_addr = hex::encode(&vanity_addr);
 
-                match lock.try_read() {
-                    Ok(read_lock) => {
-                        // If the length is greater than 0, it has already been written, so we can stop calculations
-                        if read_lock.0.len() > 0 {
-                            break;
-                        }
+                // Get read lock, otherwise break because some other thread acquired the write lock
+                let Ok(read_lock) = lock.try_read() else { break };
 
-                        if vanity_addr.starts_with(&p) {
-                            // Drop read lock and attempt to acquire write lock
-                            drop(read_lock);
-                            let mut write_lock = lock.write().unwrap();
+                // If the length of the vanity address is greater than 0, it has already been written (we can stop)
+                if read_lock.0.len() > 0 { break }
 
-                            let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
-                            let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
-                            salt_bytes.copy_from_slice(&salt_bytes_slice);
+                // If the vanity address doesn't match, then continue
+                if !vanity_addr.starts_with(&p) { continue }
 
-                            *write_lock = (salt, salt_bytes);
-                            drop(write_lock);
+                // Drop read lock and attempt to acquire write lock
+                drop(read_lock);
+                let mut write_lock = lock.write().unwrap();
 
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        // Break because this means some other thread acquired a write lock
-                        break;
-                    }
-                }
+                // Write to lock
+                let salt_hex = hex::encode(Keccak256::digest(salt.clone()));
+                let salt_bytes_slice = hex::decode(&salt_hex).unwrap();
+                salt_bytes.copy_from_slice(&salt_bytes_slice);
+                *write_lock = (salt, salt_bytes);
+
+                // Clean up and finish
+                drop(write_lock);
+                break;
             }
         });
 
