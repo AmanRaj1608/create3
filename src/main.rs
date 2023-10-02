@@ -20,11 +20,7 @@ fn main() {
 
         match choice {
             "1" => {
-                print!("\x1b[36mEnter deployer address (with '0x' prefix):\x1b[0m ");
-                io::stdout().flush().unwrap();
-                let mut deployer = String::new();
-                io::stdin().read_line(&mut deployer).unwrap();
-                let deployer = deployer.trim().trim_start_matches("0x");
+                let deployer = request_deployer_address();
 
                 print!("\x1b[36mEnter salt (utf8):\x1b[0m ");
                 io::stdout().flush().unwrap();
@@ -32,7 +28,7 @@ fn main() {
                 io::stdin().read_line(&mut salt).unwrap();
                 let salt = salt.trim();
 
-                let address = calc_addr(&hex::decode(deployer).unwrap(), salt.as_bytes());
+                let address = calc_addr(&deployer, salt.as_bytes());
                 println!(
                     "\x1b[32mCREATE3 address:\x1b[0m 0x{}",
                     hex::encode(&address)
@@ -40,12 +36,7 @@ fn main() {
                 break;
             }
             "2" => {
-                print!("\x1b[36mEnter deployer address (with '0x' prefix):\x1b[0m ");
-                io::stdout().flush().unwrap();
-                let mut deployer = String::new();
-                io::stdin().read_line(&mut deployer).unwrap();
-                let deployer = deployer.trim().trim_start_matches("0x");
-                let deployer = &hex::decode(deployer).unwrap();
+                let deployer = request_deployer_address();
 
                 let salt;
                 let mut prefix;
@@ -57,7 +48,7 @@ fn main() {
                     io::stdin().read_line(&mut prefix).unwrap();
                     prefix = prefix.trim().to_owned();
 
-                    match generate_salt(deployer, &prefix) {
+                    match generate_salt(&deployer, &prefix) {
                         Ok(s) => {
                             salt = s;
                             break;
@@ -71,17 +62,13 @@ fn main() {
                     }
                 }
 
-                println!("\x1b[32mVanity address:\x1b[0m 0x{}", hex::encode(calc_addr_with_bytes(deployer, &salt.1)));
+                println!("\x1b[32mVanity address:\x1b[0m 0x{}", hex::encode(calc_addr_with_bytes(&deployer, &salt.1)));
                 println!("\x1b[32mSalt string:\x1b[0m {}", salt.0);
                 println!("\x1b[32mHashed salt for prefix {}:\x1b[0m 0x{}", prefix, hex::encode(salt.1));
                 break;
             }
             "3" => {
-                print!("\x1b[36mEnter deployer address (with '0x' prefix):\x1b[0m ");
-                io::stdout().flush().unwrap();
-                let mut deployer = String::new();
-                io::stdin().read_line(&mut deployer).unwrap();
-                let deployer = deployer.trim().trim_start_matches("0x");
+                let deployer = request_deployer_address();
 
                 print!("\x1b[36mEnter salt prefix (utf8):\x1b[0m ");
                 io::stdout().flush().unwrap();
@@ -92,7 +79,6 @@ fn main() {
                 let mut prefix;
                 let generated;
                 let vanity_addr;
-                let deployer = &hex::decode(deployer).unwrap();
 
                 print!("\x1b[36mEnter address prefix (without '0x' prefix):\x1b[0m ");
                 loop {
@@ -101,10 +87,10 @@ fn main() {
                     io::stdin().read_line(&mut prefix).unwrap();
                     prefix = prefix.trim().to_owned();
 
-                    match generate_salt_prefix(deployer, salt_prefix, &prefix) {
+                    match generate_salt_prefix(&deployer, salt_prefix, &prefix) {
                         Ok(s) => {
                             generated = s;
-                            vanity_addr = calc_addr_with_bytes(deployer, &generated.1);
+                            vanity_addr = calc_addr_with_bytes(&deployer, &generated.1);
                             break;
                         }
                         Err(Create3GenerateSaltError::PrefixNotHexEncoded) => {
@@ -125,5 +111,28 @@ fn main() {
                 println!("\x1b[31Invalid choice, please try again.\x1b[0m");
             }
         }
+    }
+}
+
+fn request_deployer_address() -> Vec<u8> {
+    print!("\x1b[36mEnter deployer address:\x1b[0m ");
+    loop {
+        io::stdout().flush().unwrap();
+        let mut deployer = String::new();
+        io::stdin().read_line(&mut deployer).unwrap();
+        let deployer = deployer.trim().trim_start_matches("0x");
+
+        println!("i got {}", deployer);
+    
+        if !deployer.chars().all(|c| c.is_ascii_hexdigit()) {
+            print!("\x1b[36mInput was not hex encoded. Please enter deployer:\x1b[0m ");
+            continue;
+        }
+        else if deployer.len() != 20 {
+            print!("\x1b[36mInput has an incorrect length (expected 20). Please enter deployer:\x1b[0m ");
+            continue;
+        }
+
+        break hex::decode(deployer).unwrap();
     }
 }

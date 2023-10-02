@@ -1,7 +1,6 @@
 pub mod errors;
 
 use std::{
-    ops::Deref,
     sync::{Arc, RwLock},
     thread,
 };
@@ -9,9 +8,6 @@ use std::{
 use errors::Create3GenerateSaltError;
 use rand::{distributions::Alphanumeric, Rng};
 use sha3::{Digest, Keccak256};
-
-// TODO: add regex fn for salt generation
-// TODO: add additional input checks to binary
 
 // Proxy bytecode - Deplyed contract bytecode doesn't effect the deterministic address.
 const KECCAK256_PROXY_CHILD_BYTECODE: [u8; 32] = [
