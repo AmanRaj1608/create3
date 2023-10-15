@@ -232,13 +232,19 @@ pub fn generate_salt_prefix_multithread(
                 let vanity_addr = hex::encode(&vanity_addr);
 
                 // Get read lock, otherwise break because some other thread acquired the write lock
-                let Ok(read_lock) = lock.try_read() else { break };
+                let Ok(read_lock) = lock.try_read() else {
+                    break;
+                };
 
                 // If the length of the vanity address is greater than 0, it has already been written (we can stop)
-                if read_lock.0.len() > 0 { break }
+                if read_lock.0.len() > 0 {
+                    break;
+                }
 
                 // If the vanity address doesn't match, then continue
-                if !vanity_addr.starts_with(&p) { continue }
+                if !vanity_addr.starts_with(&p) {
+                    continue;
+                }
 
                 // Drop read lock and attempt to acquire write lock
                 drop(read_lock);
